@@ -20,6 +20,125 @@ DATA_PATH = os.path.join(WEB_DIR, "data.json")
 
 TZ_CHINA = zoneinfo.ZoneInfo("Asia/Shanghai")
 TTS_VOICE = "zh-CN-XiaoxiaoNeural"
+QUOTES_FILE = os.path.join(PROJECT_DIR, "quotes_used.json")
+
+# ---------------------------------------------------------------------------
+# Daily famous quotes (80 quotes, Chinese + author)
+# ---------------------------------------------------------------------------
+
+QUOTES: list[dict[str, str]] = [
+    {"text": "生活不止眼前的苟且，还有诗和远方。", "author": "高晓松"},
+    {"text": "人生如逆旅，我亦是行人。", "author": "苏轼"},
+    {"text": "天行健，君子以自强不息。", "author": "《周易》"},
+    {"text": "世上无难事，只怕有心人。", "author": "谚语"},
+    {"text": "路漫漫其修远兮，吾将上下而求索。", "author": "屈原"},
+    {"text": "千里之行，始于足下。", "author": "老子"},
+    {"text": "不积跬步，无以至千里；不积小流，无以成江海。", "author": "荀子"},
+    {"text": "业精于勤，荒于嬉；行成于思，毁于随。", "author": "韩愈"},
+    {"text": "宝剑锋从磨砺出，梅花香自苦寒来。", "author": "《警世贤文》"},
+    {"text": "书山有路勤为径，学海无涯苦作舟。", "author": "韩愈"},
+    {"text": "长风破浪会有时，直挂云帆济沧海。", "author": "李白"},
+    {"text": "天生我材必有用，千金散尽还复来。", "author": "李白"},
+    {"text": "山重水复疑无路，柳暗花明又一村。", "author": "陆游"},
+    {"text": "会当凌绝顶，一览众山小。", "author": "杜甫"},
+    {"text": "海内存知己，天涯若比邻。", "author": "王勃"},
+    {"text": "但愿人长久，千里共婵娟。", "author": "苏轼"},
+    {"text": "不以物喜，不以己悲。", "author": "范仲淹"},
+    {"text": "先天下之忧而忧，后天下之乐而乐。", "author": "范仲淹"},
+    {"text": "富贵不能淫，贫贱不能移，威武不能屈。", "author": "孟子"},
+    {"text": "生于忧患，死于安乐。", "author": "孟子"},
+    {"text": "三人行，必有我师焉。", "author": "孔子"},
+    {"text": "学而不思则罔，思而不学则殆。", "author": "孔子"},
+    {"text": "知之者不如好之者，好之者不如乐之者。", "author": "孔子"},
+    {"text": "己所不欲，勿施于人。", "author": "孔子"},
+    {"text": "知之为知之，不知为不知，是知也。", "author": "孔子"},
+    {"text": "敏而好学，不耻下问。", "author": "孔子"},
+    {"text": "非淡泊无以明志，非宁静无以致远。", "author": "诸葛亮"},
+    {"text": "鞠躬尽瘁，死而后已。", "author": "诸葛亮"},
+    {"text": "静以修身，俭以养德。", "author": "诸葛亮"},
+    {"text": "天下兴亡，匹夫有责。", "author": "顾炎武"},
+    {"text": "为中华之崛起而读书。", "author": "周恩来"},
+    {"text": "时间就是生命，浪费时间就是浪费生命。", "author": "鲁迅"},
+    {"text": "其实地上本没有路，走的人多了，也便成了路。", "author": "鲁迅"},
+    {"text": "横眉冷对千夫指，俯首甘为孺子牛。", "author": "鲁迅"},
+    {"text": "成功是百分之一的天赋加上百分之九十九的汗水。", "author": "爱迪生"},
+    {"text": "天才是百分之一的灵感加上百分之九十九的汗水。", "author": "爱迪生"},
+    {"text": "失败是成功之母。", "author": "谚语"},
+    {"text": "知识就是力量。", "author": "培根"},
+    {"text": "读一本好书，就是和许多高尚的人谈话。", "author": "歌德"},
+    {"text": "人生就像骑自行车，要保持平衡就得不断前进。", "author": "爱因斯坦"},
+    {"text": "想象力比知识更重要。", "author": "爱因斯坦"},
+    {"text": "人最宝贵的是生命，生命对人来说只有一次。", "author": "奥斯特洛夫斯基"},
+    {"text": "冬天来了，春天还会远吗？", "author": "雪莱"},
+    {"text": "走自己的路，让别人说去吧。", "author": "但丁"},
+    {"text": "我思故我在。", "author": "笛卡尔"},
+    {"text": "活着就是为了改变世界。", "author": "乔布斯"},
+    {"text": "保持饥饿，保持愚蠢。", "author": "乔布斯"},
+    {"text": "人生最大的荣耀不在于从不跌倒，而在于每次跌倒后都能爬起来。", "author": "曼德拉"},
+    {"text": "教育是最强大的武器，你可以用它来改变世界。", "author": "曼德拉"},
+    {"text": "不经巨大的困难，不会有伟大的事业。", "author": "伏尔泰"},
+    {"text": "胜利属于最坚忍的人。", "author": "拿破仑"},
+    {"text": "不想当将军的士兵不是好士兵。", "author": "拿破仑"},
+    {"text": "给我一个支点，我可以撬动整个地球。", "author": "阿基米德"},
+    {"text": "有志者，事竟成。", "author": "《后汉书》"},
+    {"text": "滴水穿石，非一日之功。", "author": "谚语"},
+    {"text": "一分耕耘，一分收获。", "author": "谚语"},
+    {"text": "塞翁失马，焉知非福。", "author": "《淮南子》"},
+    {"text": "近朱者赤，近墨者黑。", "author": "谚语"},
+    {"text": "青，取之于蓝而青于蓝。", "author": "荀子"},
+    {"text": "锲而不舍，金石可镂。", "author": "荀子"},
+    {"text": "人生自古谁无死，留取丹心照汗青。", "author": "文天祥"},
+    {"text": "春蚕到死丝方尽，蜡炬成灰泪始干。", "author": "李商隐"},
+    {"text": "海阔凭鱼跃，天高任鸟飞。", "author": "谚语"},
+    {"text": "日省其身，有则改之，无则加勉。", "author": "朱熹"},
+    {"text": "纸上得来终觉浅，绝知此事要躬行。", "author": "陆游"},
+    {"text": "问渠那得清如许，为有源头活水来。", "author": "朱熹"},
+    {"text": "盛年不重来，一日难再晨。及时当勉励，岁月不待人。", "author": "陶渊明"},
+    {"text": "采菊东篱下，悠然见南山。", "author": "陶渊明"},
+    {"text": "不以规矩，不能成方圆。", "author": "孟子"},
+    {"text": "老骥伏枥，志在千里。烈士暮年，壮心不已。", "author": "曹操"},
+    {"text": "博观而约取，厚积而薄发。", "author": "苏轼"},
+    {"text": "大鹏一日同风起，扶摇直上九万里。", "author": "李白"},
+    {"text": "沉舟侧畔千帆过，病树前头万木春。", "author": "刘禹锡"},
+    {"text": "莫愁前路无知己，天下谁人不识君。", "author": "高适"},
+    {"text": "落红不是无情物，化作春泥更护花。", "author": "龚自珍"},
+    {"text": "吃得苦中苦，方为人上人。", "author": "谚语"},
+    {"text": "只要功夫深，铁杵磨成针。", "author": "谚语"},
+    {"text": "良药苦口利于病，忠言逆耳利于行。", "author": "谚语"},
+    {"text": "一寸光阴一寸金，寸金难买寸光阴。", "author": "谚语"},
+    {"text": "少壮不努力，老大徒伤悲。", "author": "《长歌行》"},
+]
+
+
+def pick_quote() -> dict[str, str]:
+    """Pick a quote that hasn't been used yet. Tracks usage in a JSON file."""
+    used_ids: list[int] = []
+    if os.path.exists(QUOTES_FILE):
+        try:
+            with open(QUOTES_FILE, "r", encoding="utf-8") as f:
+                used_ids = json.load(f)
+        except (json.JSONDecodeError, IOError):
+            used_ids = []
+
+    available = [i for i in range(len(QUOTES)) if i not in used_ids]
+
+    # If all quotes used, reset the cycle
+    if not available:
+        used_ids = []
+        available = list(range(len(QUOTES)))
+
+    import random
+    idx = random.choice(available)
+    used_ids.append(idx)
+
+    # Keep only last 200 to prevent file growth
+    if len(used_ids) > 200:
+        used_ids = used_ids[-200:]
+
+    with open(QUOTES_FILE, "w", encoding="utf-8") as f:
+        json.dump(used_ids, f)
+
+    return QUOTES[idx]
 
 # ---------------------------------------------------------------------------
 # Chinese team name mapping
@@ -251,6 +370,7 @@ def build_announcement_text(
     finished_other: list[dict],
     upcoming: list[dict],
     now: datetime.datetime,
+    quote: dict[str, str] | None = None,
 ) -> str:
     weekday_names = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
     weekday = weekday_names[now.weekday()]
@@ -282,6 +402,9 @@ def build_announcement_text(
             pred = predict_score(m["home_team"], m["away_team"])
             parts.append(f"{m['home_team']}对阵{m['away_team']}（预测{pred}）{time_str}。")
 
+    if quote:
+        parts.append(f"今日名言：{quote['text']} ——{quote['author']}")
+
     parts.append("祝您有美好的一天！")
     return "\n".join(parts)
 
@@ -292,13 +415,13 @@ def build_push_text(
     upcoming: list[dict],
     now: datetime.datetime,
     audio_url: str,
+    quote: dict[str, str] | None = None,
 ) -> str:
     weekday_names = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
     weekday = weekday_names[now.weekday()]
     date_str = now.strftime("%m月%d日")
     lines = [f"⚽ 世界杯比分播报 | {date_str} {weekday}"]
 
-    # Show early-morning finished matches first
     if finished_early:
         lines.append("\n【凌晨比分】")
         for m in finished_early:
@@ -312,7 +435,6 @@ def build_push_text(
                 f"  {m['home_team']} {m['home_score']} - {m['away_score']} {m['away_team']}"
             )
 
-    # Group upcoming by Beijing date
     if upcoming:
         by_date: dict[str, list[dict]] = {}
         for m in upcoming[:12]:
@@ -330,6 +452,10 @@ def build_push_text(
 
     if not finished_early and not finished_other and not upcoming:
         lines.append("\n暂无比赛数据。")
+
+    if quote:
+        lines.append(f"\n📖 {quote['text']}")
+        lines.append(f"  —— {quote['author']}")
 
     return "\n".join(lines)
 
@@ -387,7 +513,10 @@ def main():
     print(f"  凌晨比分: {len(finished_early)} 场, 其他结束: {len(finished_other)} 场, "
           f"即将开始: {len(upcoming)} 场")
 
-    text = build_announcement_text(finished_early, finished_other, upcoming, now)
+    quote = pick_quote()
+    print(f"  今日名言: {quote['text'][:30]}... ——{quote['author']}")
+
+    text = build_announcement_text(finished_early, finished_other, upcoming, now, quote)
     print("  播音文本：")
     print(f"  {text[:150]}..." if len(text) > 150 else f"  {text}")
 
@@ -419,7 +548,7 @@ def main():
         audio_url = f"{audio_base.rstrip('/')}/" if audio_base else ""
         push_title = f"⚽ 世界杯比分 {now.strftime('%m月%d日')}"
         push_content = build_push_text(finished_early, finished_other, upcoming,
-                                       now, audio_url)
+                                       now, audio_url, quote)
         send_push(push_title, push_content)
 
 
@@ -436,7 +565,8 @@ def generate_sample():
     upcoming = [
         {"home_team": "日本", "away_team": "韩国", "utc_time": "2026-06-15T19:00Z"},
     ]
-    text = build_announcement_text(finished_early, finished_other, upcoming, now)
+    quote = {"text": "生活不止眼前的苟且，还有诗和远方。", "author": "高晓松"}
+    text = build_announcement_text(finished_early, finished_other, upcoming, now, quote)
     print(f"  播音文本：\n  {text}")
     asyncio.run(generate_mp3(text, MP3_PATH))
     data = {

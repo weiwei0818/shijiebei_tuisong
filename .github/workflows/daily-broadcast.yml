@@ -29,6 +29,14 @@ jobs:
           AUDIO_BASE_URL: https://weiwei0818.github.io/shijiebei_tuisong
         run: python worldcup_broadcast.py --push
 
+      - name: Commit quotes tracking
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add quotes_used.json
+          git diff --cached --quiet || git commit -m "update quotes tracking"
+          git push
+
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
         with:
