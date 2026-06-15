@@ -121,6 +121,28 @@ def fetch_matches_for_window(now: datetime.datetime | None = None) -> tuple[list
 # Announcement text
 # ---------------------------------------------------------------------------
 
+def to_beijing_time(utc_str: str) -> str:
+    """Convert UTC time string to Beijing time HH:MM format."""
+    if not utc_str:
+        return ""
+    try:
+        mt = datetime.datetime.fromisoformat(utc_str.replace("Z", "+00:00"))
+        return mt.astimezone(TZ_CHINA).strftime("%H:%M")
+    except (ValueError, TypeError):
+        return ""
+
+
+def to_beijing_date(utc_str: str) -> str:
+    """Convert UTC time string to Beijing date MM月DD日 format."""
+    if not utc_str:
+        return ""
+    try:
+        mt = datetime.datetime.fromisoformat(utc_str.replace("Z", "+00:00"))
+        return mt.astimezone(TZ_CHINA).strftime("%m月%d日")
+    except (ValueError, TypeError):
+        return ""
+
+
 def build_announcement_text(finished: list[dict], upcoming: list[dict], now: datetime.datetime) -> str:
     weekday_names = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
     weekday = weekday_names[now.weekday()]
@@ -140,18 +162,12 @@ def build_announcement_text(finished: list[dict], upcoming: list[dict], now: dat
         parts.append("目前还没有已结束的比赛。")
 
     if upcoming:
-        parts.append("今日即将进行的比赛：")
+        parts.append("即将进行的比赛（北京时间）：")
         for m in upcoming[:8]:
             home = m.get("home_team", "未知")
             away = m.get("away_team", "未知")
-            match_time = m.get("utc_time", "")
-            time_str = ""
-            if match_time:
-                try:
-                    mt = datetime.datetime.fromisoformat(match_time.replace("Z", "+00:00"))
-                    time_str = f"，{mt.astimezone(TZ_CHINA).strftime('%H:%M')}开赛"
-                except (ValueError, TypeError):
-                    pass
+            bj_time = to_beijing_time(m.get("utc_time", ""))
+            time_str = f"，{bj_time}开赛" if bj_time else ""
             parts.append(f"{home}对阵{away}{time_str}。")
 
     parts.append("祝您有美好的一天！")
@@ -159,7 +175,7 @@ def build_announcement_text(finished: list[dict], upcoming: list[dict], now: dat
 
 
 def build_push_text(finished: list[dict], upcoming: list[dict], now: datetime.datetime, audio_url: str) -> str:
-    """Build text-only push notification."""
+    """Build text-only push notification. All times in Beijing time."""
     weekday_names = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
     weekday = weekday_names[now.weekday()]
     date_str = now.strftime("%m月%d日")
@@ -176,19 +192,18 @@ def build_push_text(finished: list[dict], upcoming: list[dict], now: datetime.da
             lines.append(f"  {home} {hs} - {aws} {away}")
 
     if upcoming:
-        lines.append("\n【今日赛程】")
-        for m in upcoming[:8]:
-            home = m.get("home_team", "?")
-            away = m.get("away_team", "?")
-            match_time = m.get("utc_time", "")
-            time_str = ""
-            if match_time:
-                try:
-                    mt = datetime.datetime.fromisoformat(match_time.replace("Z", "+00:00"))
-                    time_str = f" {mt.astimezone(TZ_CHINA).strftime('%H:%M')}"
-                except (ValueError, TypeError):
-                    pass
-            lines.append(f"  {home} vs {away}{time_str}")
+        by_date: dict[str, list[dict]] = {}
+        for m in upcoming[:12]:
+            cn_date = to_beijing_date(m.get("utc_time", "")) or "其他"
+            by_date.setdefault(cn_date, []).append(m)
+
+        for cn_date, day_matches in by_date.items():
+            lines.append(f"\n【{cn_date}赛程】")
+            for m in day_matches:
+                home = m.get("home_team", "?")
+                away = m.get("away_team", "?")
+                bj_time = to_beijing_time(m.get("utc_time", ""))
+                lines.append(f"  {bj_time}  {home} vs {away}" if bj_time else f"  {home} vs {away}")
     elif not finished:
         lines.append("\n暂无比赛数据。")
 
