@@ -36,19 +36,23 @@ TTS_VOICE = "zh-CN-XiaoxiaoNeural"
 # Data fetching
 # ---------------------------------------------------------------------------
 
-def fetch_matches_espn(date_str: str) -> list[dict]:
-    url = (
-        "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard"
-        f"?dates={date_str}"
-    )
+def fetch_all_matches() -> tuple[list[dict], list[dict]]:
+    """Fetch all matches from ESPN API. Returns (finished, upcoming) lists.
+
+    ESPN scoreboard endpoint without any date param returns the current
+    match-day matches (both finished and upcoming).
+    """
+    url = "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard"
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(req, timeout=15) as resp:
             data = json.loads(resp.read().decode())
     except Exception:
-        return []
+        return [], []
 
-    matches = []
+    finished = []
+    upcoming = []
+
     for evt in data.get("events", []):
         competitions = evt.get("competitions", [])
         if not competitions:
@@ -58,102 +62,136 @@ def fetch_matches_espn(date_str: str) -> list[dict]:
         home = competitors[0] if len(competitors) > 0 else {}
         away = competitors[1] if len(competitors) > 1 else {}
         status = evt.get("status", {}).get("type", {}).get("name", "")
-        matches.append({
+
+        match = {
             "home_team": home.get("team", {}).get("displayName", "Unknown"),
             "away_team": away.get("team", {}).get("displayName", "Unknown"),
             "home_score": int(home.get("score", 0) or 0),
             "away_score": int(away.get("score", 0) or 0),
             "status": status,
             "utc_time": evt.get("date", ""),
-        })
-    return matches
+            "venue": comp.get("venue", {}).get("fullName", ""),
+        }
+
+        if status == "STATUS_FINAL":
+            finished.append(match)
+        elif status in ("STATUS_SCHEDULED", "STATUS_IN_PROGRESS", "STATUS_HALFTIME"):
+            upcoming.append(match)
+
+    # Sort finished by time descending (most recent first)
+    finished.sort(key=lambda m: m.get("utc_time", ""), reverse=True)
+    # Sort upcoming by time ascending (earliest first)
+    upcoming.sort(key=lambda m: m.get("utc_time", ""))
+
+    return finished, upcoming
 
 
-def fetch_matches_for_window(now: datetime.datetime | None = None) -> list[dict]:
+def fetch_matches_for_window(now: datetime.datetime | None = None) -> tuple[list[dict], list[dict]]:
+    """Return (finished_in_window, upcoming_today) for the morning broadcast."""
     if now is None:
         now = datetime.datetime.now(TZ_CHINA)
 
     window_start = now.replace(hour=HOUR_START, minute=0, second=0, microsecond=0)
     window_end = now.replace(hour=HOUR_END, minute=0, second=0, microsecond=0)
 
-    date_param = now.strftime("%Y-%m-%d")
-    all_matches = fetch_matches_espn(date_param)
+    all_finished, all_upcoming = fetch_all_matches()
 
-    yesterday = (now - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
-    all_matches += fetch_matches_espn(yesterday)
-
-    seen = set()
-    filtered = []
-    for m in all_matches:
-        key = f"{m['home_team']}|{m['away_team']}|{m.get('utc_time', '')}"
-        if key in seen:
-            continue
-        seen.add(key)
-
-        if m["status"] != "STATUS_FINAL":
-            continue
-
+    # Filter finished matches to the 0:00-7:00 AM China time window
+    finished_in_window = []
+    for m in all_finished:
         if m.get("utc_time"):
             try:
                 match_time = datetime.datetime.fromisoformat(
                     m["utc_time"].replace("Z", "+00:00")
                 )
                 match_time_cn = match_time.astimezone(TZ_CHINA)
-                if not (window_start <= match_time_cn <= window_end):
-                    continue
+                if window_start <= match_time_cn <= window_end:
+                    finished_in_window.append(m)
             except (ValueError, TypeError):
                 pass
 
-        filtered.append(m)
+    # If no finished matches in window, include all recent finished matches
+    if not finished_in_window:
+        finished_in_window = all_finished[:10]
 
-    return filtered
+    return finished_in_window, all_upcoming[:10]
 
 
 # ---------------------------------------------------------------------------
 # Announcement text
 # ---------------------------------------------------------------------------
 
-def build_announcement_text(matches: list[dict], now: datetime.datetime) -> str:
+def build_announcement_text(finished: list[dict], upcoming: list[dict], now: datetime.datetime) -> str:
     weekday_names = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
     weekday = weekday_names[now.weekday()]
     date_str = now.strftime("%m月%d日")
 
-    if not matches:
-        return (
-            f"早上好！今天是{date_str}，{weekday}。"
-            "今天凌晨零点到早上7点之间没有世界杯比赛，祝您有美好的一天！"
-        )
+    parts = [f"早上好！今天是{date_str}，{weekday}。世界杯比分播报。"]
 
-    lines = [f"早上好！今天是{date_str}，{weekday}。世界杯比分播报。"]
-    lines.append(f"今天凌晨共有{len(matches)}场比赛结果：")
+    if finished:
+        parts.append("已结束的比赛：")
+        for m in finished:
+            home = m.get("home_team", "未知")
+            away = m.get("away_team", "未知")
+            hs = m.get("home_score", 0)
+            aws = m.get("away_score", 0)
+            parts.append(f"{home}对阵{away}，比分{hs}比{aws}。")
+    else:
+        parts.append("目前还没有已结束的比赛。")
 
-    for i, m in enumerate(matches, 1):
-        home = m.get("home_team", "未知")
-        away = m.get("away_team", "未知")
-        hs = m.get("home_score", 0)
-        aws = m.get("away_score", 0)
-        lines.append(f"第{i}场，{home}对阵{away}，比分{hs}比{aws}。")
+    if upcoming:
+        parts.append("今日即将进行的比赛：")
+        for m in upcoming[:8]:
+            home = m.get("home_team", "未知")
+            away = m.get("away_team", "未知")
+            match_time = m.get("utc_time", "")
+            time_str = ""
+            if match_time:
+                try:
+                    mt = datetime.datetime.fromisoformat(match_time.replace("Z", "+00:00"))
+                    time_str = f"，{mt.astimezone(TZ_CHINA).strftime('%H:%M')}开赛"
+                except (ValueError, TypeError):
+                    pass
+            parts.append(f"{home}对阵{away}{time_str}。")
 
-    lines.append("以上就是今天凌晨的世界杯比分播报，祝您有美好的一天！")
-    return "\n".join(lines)
+    parts.append("祝您有美好的一天！")
+    return "\n".join(parts)
 
 
-def build_push_text(matches: list[dict], now: datetime.datetime, audio_url: str) -> str:
-    """Build text-only push notification with match scores."""
+def build_push_text(finished: list[dict], upcoming: list[dict], now: datetime.datetime, audio_url: str) -> str:
+    """Build text-only push notification."""
     weekday_names = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
     weekday = weekday_names[now.weekday()]
     date_str = now.strftime("%m月%d日")
 
-    if not matches:
-        return f"⚽ 世界杯比分播报 | {date_str} {weekday}\n\n今天凌晨没有比赛。"
+    lines = [f"⚽ 世界杯比分播报 | {date_str} {weekday}"]
 
-    lines = [f"⚽ 世界杯比分播报 | {date_str} {weekday}\n"]
-    for m in matches:
-        home = m.get("home_team", "?")
-        away = m.get("away_team", "?")
-        hs = m.get("home_score", 0)
-        aws = m.get("away_score", 0)
-        lines.append(f"{home} {hs} - {aws} {away}")
+    if finished:
+        lines.append("\n【已结束】")
+        for m in finished:
+            home = m.get("home_team", "?")
+            away = m.get("away_team", "?")
+            hs = m.get("home_score", 0)
+            aws = m.get("away_score", 0)
+            lines.append(f"  {home} {hs} - {aws} {away}")
+
+    if upcoming:
+        lines.append("\n【今日赛程】")
+        for m in upcoming[:8]:
+            home = m.get("home_team", "?")
+            away = m.get("away_team", "?")
+            match_time = m.get("utc_time", "")
+            time_str = ""
+            if match_time:
+                try:
+                    mt = datetime.datetime.fromisoformat(match_time.replace("Z", "+00:00"))
+                    time_str = f" {mt.astimezone(TZ_CHINA).strftime('%H:%M')}"
+                except (ValueError, TypeError):
+                    pass
+            lines.append(f"  {home} vs {away}{time_str}")
+    elif not finished:
+        lines.append("\n暂无比赛数据。")
+
     return "\n".join(lines)
 
 
@@ -234,11 +272,11 @@ def main():
     do_push = "--push" in sys.argv or os.environ.get("PUSH_TOKEN")
 
     print(f"[{now.strftime('%Y-%m-%d %H:%M:%S')}] 正在获取比赛数据...")
-    matches = fetch_matches_for_window(now)
+    finished, upcoming = fetch_matches_for_window(now)
 
-    print(f"  找到 {len(matches)} 场比赛")
+    print(f"  已结束: {len(finished)} 场, 即将开始: {len(upcoming)} 场")
 
-    text = build_announcement_text(matches, now)
+    text = build_announcement_text(finished, upcoming, now)
     print("  播音文本：")
     print(f"  {text[:120]}..." if len(text) > 120 else f"  {text}")
 
@@ -247,17 +285,18 @@ def main():
     print(f"  语音已保存: {MP3_PATH}")
 
     # Write data.json for web page
+    all_matches = finished + upcoming
     data = {
         "date": now.strftime("%Y-%m-%d"),
         "time": now.strftime("%H:%M"),
-        "match_count": len(matches),
+        "match_count": len(all_matches),
         "text": text,
         "matches": [{
             "home_team": m.get("home_team", ""),
             "away_team": m.get("away_team", ""),
             "home_score": m.get("home_score", 0),
             "away_score": m.get("away_score", 0),
-        } for m in matches],
+        } for m in all_matches],
     }
     with open(DATA_PATH, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
@@ -268,7 +307,7 @@ def main():
         audio_base = os.environ.get("AUDIO_BASE_URL", "")
         audio_url = f"{audio_base.rstrip('/')}/" if audio_base else ""
         push_title = f"⚽ 世界杯比分 {now.strftime('%m月%d日')}"
-        push_content = build_push_text(matches, now, audio_url)
+        push_content = build_push_text(finished, upcoming, now, audio_url)
         send_push(push_title, push_content)
 
 
@@ -277,20 +316,23 @@ def generate_sample():
     os.makedirs(WEB_DIR, exist_ok=True)
     now = datetime.datetime.now(TZ_CHINA)
 
-    sample_matches = [
+    sample_finished = [
         {"home_team": "巴西", "away_team": "德国", "home_score": 2, "away_score": 1},
         {"home_team": "阿根廷", "away_team": "法国", "home_score": 1, "away_score": 1},
     ]
-    text = build_announcement_text(sample_matches, now)
+    sample_upcoming = [
+        {"home_team": "西班牙", "away_team": "葡萄牙", "utc_time": "2026-06-15T19:00Z"},
+    ]
+    text = build_announcement_text(sample_finished, sample_upcoming, now)
     print(f"  播音文本：\n  {text}")
     asyncio.run(generate_mp3(text, MP3_PATH))
 
     data = {
         "date": now.strftime("%Y-%m-%d"),
         "time": now.strftime("%H:%M"),
-        "match_count": len(sample_matches),
+        "match_count": len(sample_finished) + len(sample_upcoming),
         "text": text,
-        "matches": sample_matches,
+        "matches": sample_finished + sample_upcoming,
     }
     with open(DATA_PATH, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
