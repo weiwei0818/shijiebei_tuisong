@@ -271,22 +271,15 @@ def fetch_date(date_str: str) -> list[dict]:
     return matches
 
 
-def fetch_matches_for_window(now: datetime.datetime | None = None) -> tuple[list[dict], list[dict], list[dict]]:
-    """Return (finished_early, finished_other, upcoming) for morning broadcast.
+def fetch_matches_for_window(now: datetime.datetime | None = None) -> tuple[list[dict], list[dict]]:
+    """Return (finished, upcoming) for morning broadcast.
 
-    finished_early: matches that ended in 0:00-7:00 BJT window today
-    finished_other: other recently finished matches
+    finished: all recently finished matches (multi-day query)
     upcoming: scheduled matches for today/tomorrow
     """
     if now is None:
         now = datetime.datetime.now(TZ_CHINA)
 
-    window_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    window_end = now.replace(hour=7, minute=0, second=0, microsecond=0)
-
-    # Query multiple UTC dates to cover the BJT early-morning window:
-    # BJT 0:00-7:00 on day D = UTC 16:00-(D-1) to UTC 23:00-(D-1), plus
-    # possibly UTC 00:00 of day D for matches that start very late
     today_bj = now
     yesterday_utc = (today_bj - datetime.timedelta(days=1)).strftime("%Y%m%d")
     today_utc = today_bj.strftime("%Y%m%d")
@@ -304,37 +297,20 @@ def fetch_matches_for_window(now: datetime.datetime | None = None) -> tuple[list
         if key not in seen:
             seen.add(key)
             unique.append(m)
-    all_matches = unique
 
-    finished_early: list[dict] = []
-    finished_other: list[dict] = []
+    finished: list[dict] = []
     upcoming: list[dict] = []
 
-    for m in all_matches:
+    for m in unique:
         if m["status"] in ("STATUS_FINAL", "STATUS_FULL_TIME"):
-            # Check if match time falls in the 0:00-7:00 BJT window
-            if m.get("utc_time"):
-                try:
-                    mt = datetime.datetime.fromisoformat(
-                        m["utc_time"].replace("Z", "+00:00")
-                    )
-                    mt_bj = mt.astimezone(TZ_CHINA)
-                    if window_start <= mt_bj <= window_end:
-                        finished_early.append(m)
-                    else:
-                        finished_other.append(m)
-                except (ValueError, TypeError):
-                    finished_other.append(m)
-            else:
-                finished_other.append(m)
+            finished.append(m)
         elif m["status"] in ("STATUS_SCHEDULED", "STATUS_IN_PROGRESS", "STATUS_HALFTIME"):
             upcoming.append(m)
 
-    finished_early.sort(key=lambda m: m.get("utc_time", ""))
-    finished_other.sort(key=lambda m: m.get("utc_time", ""), reverse=True)
+    finished.sort(key=lambda m: m.get("utc_time", ""), reverse=True)
     upcoming.sort(key=lambda m: m.get("utc_time", ""))
 
-    return finished_early, finished_other, upcoming
+    return finished, upcoming
 
 
 # ---------------------------------------------------------------------------
@@ -366,8 +342,7 @@ def to_beijing_date(utc_str: str) -> str:
 # ---------------------------------------------------------------------------
 
 def build_announcement_text(
-    finished_early: list[dict],
-    finished_other: list[dict],
+    finished: list[dict],
     upcoming: list[dict],
     now: datetime.datetime,
     quote: dict[str, str] | None = None,
@@ -377,16 +352,9 @@ def build_announcement_text(
     date_str = now.strftime("%m月%d日")
     parts = [f"早上好！今天是{date_str}，{weekday}。世界杯比分播报。"]
 
-    if finished_early:
-        parts.append("今天凌晨比赛结果：")
-        for m in finished_early:
-            parts.append(
-                f"{m['home_team']}对阵{m['away_team']}，比分"
-                f"{m['home_score']}比{m['away_score']}。"
-            )
-    elif finished_other:
-        parts.append("最近比赛结果：")
-        for m in finished_other[:6]:
+    if finished:
+        parts.append("已结束的比赛：")
+        for m in finished:
             parts.append(
                 f"{m['home_team']}对阵{m['away_team']}，比分"
                 f"{m['home_score']}比{m['away_score']}。"
@@ -410,8 +378,7 @@ def build_announcement_text(
 
 
 def build_push_text(
-    finished_early: list[dict],
-    finished_other: list[dict],
+    finished: list[dict],
     upcoming: list[dict],
     now: datetime.datetime,
     audio_url: str,
@@ -422,15 +389,9 @@ def build_push_text(
     date_str = now.strftime("%m月%d日")
     lines = [f"⚽ 世界杯比分播报 | {date_str} {weekday}"]
 
-    if finished_early:
-        lines.append("\n【凌晨比分】")
-        for m in finished_early:
-            lines.append(
-                f"  {m['home_team']} {m['home_score']} - {m['away_score']} {m['away_team']}"
-            )
-    elif finished_other:
-        lines.append("\n【近期比分】")
-        for m in finished_other[:6]:
+    if finished:
+        lines.append("\n【已结束】")
+        for m in finished:
             lines.append(
                 f"  {m['home_team']} {m['home_score']} - {m['away_score']} {m['away_team']}"
             )
@@ -450,7 +411,7 @@ def build_push_text(
                     if bj_time else f"  {m['home_team']} vs {m['away_team']}  推测{pred}"
                 lines.append(line)
 
-    if not finished_early and not finished_other and not upcoming:
+    if not finished and not upcoming:
         lines.append("\n暂无比赛数据。")
 
     if quote:
@@ -508,15 +469,14 @@ def main():
     do_push = "--push" in sys.argv or os.environ.get("PUSH_TOKEN")
 
     print(f"[{now.strftime('%Y-%m-%d %H:%M:%S')}] 正在获取比赛数据...")
-    finished_early, finished_other, upcoming = fetch_matches_for_window(now)
+    finished, upcoming = fetch_matches_for_window(now)
 
-    print(f"  凌晨比分: {len(finished_early)} 场, 其他结束: {len(finished_other)} 场, "
-          f"即将开始: {len(upcoming)} 场")
+    print(f"  已结束: {len(finished)} 场, 即将开始: {len(upcoming)} 场")
 
     quote = pick_quote()
     print(f"  今日名言: {quote['text'][:30]}... ——{quote['author']}")
 
-    text = build_announcement_text(finished_early, finished_other, upcoming, now, quote)
+    text = build_announcement_text(finished, upcoming, now, quote)
     print("  播音文本：")
     print(f"  {text[:150]}..." if len(text) > 150 else f"  {text}")
 
@@ -524,7 +484,7 @@ def main():
     asyncio.run(generate_mp3(text, MP3_PATH))
     print(f"  语音已保存: {MP3_PATH}")
 
-    all_matches = finished_early + finished_other + upcoming
+    all_matches = finished + upcoming
     json_matches = []
     for m in all_matches:
         json_matches.append({
@@ -547,34 +507,31 @@ def main():
         audio_base = os.environ.get("AUDIO_BASE_URL", "")
         audio_url = f"{audio_base.rstrip('/')}/" if audio_base else ""
         push_title = f"⚽ 世界杯比分 {now.strftime('%m月%d日')}"
-        push_content = build_push_text(finished_early, finished_other, upcoming,
-                                       now, audio_url, quote)
+        push_content = build_push_text(finished, upcoming, now, audio_url, quote)
         send_push(push_title, push_content)
 
 
 def generate_sample():
     os.makedirs(WEB_DIR, exist_ok=True)
     now = datetime.datetime.now(TZ_CHINA)
-    finished_early = [
+    finished = [
         {"home_team": "巴西", "away_team": "德国", "home_score": 2, "away_score": 1},
         {"home_team": "阿根廷", "away_team": "法国", "home_score": 1, "away_score": 1},
-    ]
-    finished_other = [
         {"home_team": "英格兰", "away_team": "西班牙", "home_score": 3, "away_score": 0},
     ]
     upcoming = [
         {"home_team": "日本", "away_team": "韩国", "utc_time": "2026-06-15T19:00Z"},
     ]
     quote = {"text": "生活不止眼前的苟且，还有诗和远方。", "author": "高晓松"}
-    text = build_announcement_text(finished_early, finished_other, upcoming, now, quote)
+    text = build_announcement_text(finished, upcoming, now, quote)
     print(f"  播音文本：\n  {text}")
     asyncio.run(generate_mp3(text, MP3_PATH))
     data = {
         "date": now.strftime("%Y-%m-%d"),
         "time": now.strftime("%H:%M"),
-        "match_count": len(finished_early) + len(finished_other) + len(upcoming),
+        "match_count": len(finished) + len(upcoming),
         "text": text,
-        "matches": finished_early + finished_other + upcoming,
+        "matches": finished + upcoming,
     }
     with open(DATA_PATH, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
