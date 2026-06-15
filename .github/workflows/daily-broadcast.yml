@@ -1,0 +1,40 @@
+name: Daily World Cup Broadcast
+
+on:
+  schedule:
+    # 23:00 UTC = 7:00 AM China Standard Time (UTC+8)
+    - cron: "0 23 * * *"
+  workflow_dispatch:  # Allow manual trigger for testing
+
+jobs:
+  broadcast:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install edge-tts
+
+      - name: Run broadcast script
+        env:
+          PUSH_TOKEN: ${{ secrets.PUSH_TOKEN }}
+          PUSH_SERVICE: ${{ secrets.PUSH_SERVICE || 'pushplus' }}
+          AUDIO_BASE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
+        run: python worldcup_broadcast.py --push
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./web
+          force_orphan: true
+          commit_message: "Update broadcast ${{ github.run_number }}"
