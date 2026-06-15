@@ -139,17 +139,13 @@ def build_announcement_text(matches: list[dict], now: datetime.datetime) -> str:
 
 
 def build_push_text(matches: list[dict], now: datetime.datetime, audio_url: str) -> str:
-    """Build shorter push notification text with clickable audio link."""
+    """Build text-only push notification with match scores."""
     weekday_names = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
     weekday = weekday_names[now.weekday()]
     date_str = now.strftime("%m月%d日")
 
     if not matches:
-        return (
-            f"⚽ 世界杯比分播报 | {date_str} {weekday}\n\n"
-            "今天凌晨没有比赛。\n\n"
-            f"👉 点击收听语音播报\n{audio_url}"
-        )
+        return f"⚽ 世界杯比分播报 | {date_str} {weekday}\n\n今天凌晨没有比赛。"
 
     lines = [f"⚽ 世界杯比分播报 | {date_str} {weekday}\n"]
     for m in matches:
@@ -157,8 +153,7 @@ def build_push_text(matches: list[dict], now: datetime.datetime, audio_url: str)
         away = m.get("away_team", "?")
         hs = m.get("home_score", 0)
         aws = m.get("away_score", 0)
-        lines.append(f"  {home} {hs} - {aws} {away}")
-    lines.append(f"\n👉 点击收听完整语音播报\n{audio_url}")
+        lines.append(f"{home} {hs} - {aws} {away}")
     return "\n".join(lines)
 
 
