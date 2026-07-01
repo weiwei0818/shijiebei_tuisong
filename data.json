@@ -1,0 +1,56 @@
+{
+  "date": "2026-07-02",
+  "time": "06:59",
+  "match_count": 8,
+  "text": "早上好！今天是07月02日，周四。世界杯比分播报。\n已结束的比赛：\n英格兰对阵Congo DR，比分2比1。\n即将进行的比赛（北京时间）：\n美国对阵波黑（预测2-0），08:00开赛。\n西班牙对阵奥地利（预测2-0），03:00开赛。\n葡萄牙对阵克罗地亚（预测1-1），07:00开赛。\n瑞士对阵阿尔及利亚（预测2-0），11:00开赛。\n澳大利亚对阵埃及（预测1-1），02:00开赛。\n阿根廷对阵佛得角（预测3-0），06:00开赛。\n哥伦比亚对阵加纳（预测2-0），09:30开赛。\n今日名言：鞠躬尽瘁，死而后已。 ——诸葛亮\n祝您有美好的一天！",
+  "matches": [
+    {
+      "home_team": "英格兰",
+      "away_team": "Congo DR",
+      "home_score": 2,
+      "away_score": 1
+    },
+    {
+      "home_team": "美国",
+      "away_team": "波黑",
+      "home_score": 0,
+      "away_score": 0
+    },
+    {
+      "home_team": "西班牙",
+      "away_team": "奥地利",
+      "home_score": 0,
+      "away_score": 0
+    },
+    {
+      "home_team": "葡萄牙",
+      "away_team": "克罗地亚",
+      "home_score": 0,
+      "away_score": 0
+    },
+    {
+      "home_team": "瑞士",
+      "away_team": "阿尔及利亚",
+      "home_score": 0,
+      "away_score": 0
+    },
+    {
+      "home_team": "澳大利亚",
+      "away_team": "埃及",
+      "home_score": 0,
+      "away_score": 0
+    },
+    {
+      "home_team": "阿根廷",
+      "away_team": "佛得角",
+      "home_score": 0,
+      "away_score": 0
+    },
+    {
+      "home_team": "哥伦比亚",
+      "away_team": "加纳",
+      "home_score": 0,
+      "away_score": 0
+    }
+  ]
+}
