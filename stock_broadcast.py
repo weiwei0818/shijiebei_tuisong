@@ -457,41 +457,95 @@ def get_limit_up_stocks_ak(date_str: str) -> list[dict]:
         return []
 
 
-def get_kline_ak(code: str, lookback: int = 25) -> list[dict] | None:
-    """Fetch daily K-line data for an A-share stock using akshare."""
+def _code_to_yf(code: str) -> str:
+    """Convert A-share code to yfinance ticker: 600519 -> 600519.SS, 000858 -> 000858.SZ"""
+    if code.startswith("6"):
+        return f"{code}.SS"
+    else:
+        return f"{code}.SZ"
+
+
+def get_kline_batch_yf(codes: list[str], lookback: int = 30) -> dict[str, list[dict]]:
+    """Batch download K-line data for multiple A-share stocks using yfinance."""
     try:
-        import akshare as ak
-        end_date = datetime.datetime.now(TZ_CHINA).strftime("%Y%m%d")
-        start_date = (datetime.datetime.now(TZ_CHINA) - datetime.timedelta(days=lookback + 15)).strftime("%Y%m%d")
-        df = ak.stock_zh_a_hist(symbol=code, period="daily",
-                                start_date=start_date, end_date=end_date,
-                                adjust="qfq")
-        if df is None or df.empty or len(df) < 10:
-            return None
+        import yfinance as yf
+    except ImportError:
+        return {}
 
-        result = []
-        for _, row in df.iterrows():
-            result.append({
-                "date": str(row.get("日期", ""))[:10].replace("-", ""),
-                "open": float(row.get("开盘", 0) or 0),
-                "close": float(row.get("收盘", 0) or 0),
-                "high": float(row.get("最高", 0) or 0),
-                "low": float(row.get("最低", 0) or 0),
-                "volume": float(row.get("成交量", 0) or 0),
-                "amount": float(row.get("成交额", 0) or 0),
-            })
-        return result
-    except Exception as e:
-        print(f"  akshare kline query failed for {code}: {e}")
-        return None
+    if not codes:
+        return {}
+
+    tickers = [_code_to_yf(c) for c in codes]
+    code_map = {_code_to_yf(c): c for c in codes}
+    all_data: dict[str, list[dict]] = {}
+
+    # Download in batches of 30
+    for batch_start in range(0, len(tickers), 30):
+        batch = tickers[batch_start:batch_start + 30]
+        if batch_start > 0:
+            time.sleep(0.5)
+
+        try:
+            data = yf.download(" ".join(batch), period="1mo", progress=False,
+                               auto_adjust=True, threads=False)
+        except Exception:
+            continue
+
+        if data.empty:
+            continue
+
+        # Handle single vs multi ticker
+        close_data = data.get("Close")
+        volume_data = data.get("Volume")
+        if close_data is None or close_data.empty:
+            continue
+
+        for yf_code in batch:
+            code = code_map.get(yf_code, "")
+            if not code:
+                continue
+
+            try:
+                if isinstance(close_data, type(close_data)):
+                    if len(tickers) == 1:
+                        closes_series = close_data
+                        vols_series = volume_data
+                    else:
+                        if yf_code not in close_data.columns:
+                            continue
+                        closes_series = close_data[yf_code]
+                        vols_series = volume_data[yf_code] if volume_data is not None else None
+                else:
+                    continue
+
+                closes_series = closes_series.dropna()
+                if len(closes_series) < 7:
+                    continue
+
+                klines = []
+                for idx in closes_series.index:
+                    kline = {
+                        "date": idx.strftime("%Y%m%d") if hasattr(idx, 'strftime') else str(idx)[:10],
+                        "close": float(closes_series[idx]),
+                        "volume": float(vols_series[idx]) if vols_series is not None and idx in vols_series else 0,
+                    }
+                    klines.append(kline)
+
+                all_data[code] = klines
+            except Exception:
+                continue
+
+    return all_data
 
 
-def screen_a_stocks(max_stocks: int = 60) -> list[dict]:
-    """Screen A-share stocks using akshare: limit-up in last 5 days + volume up + above MA5."""
+def screen_a_stocks(max_stocks: int = 80) -> list[dict]:
+    """Screen A-share stocks: limit-up in last 5 days + volume up + above MA5.
+    Uses akshare for limit-up detection, yfinance for batch K-line data.
+    """
     trading_days = _get_recent_trading_days(6)
     print(f"  交易日: {', '.join(trading_days[:5])}")
 
-    # Phase 1: Get limit-up stocks for each trading day
+    # Phase 1: Get limit-up stocks for each trading day (akshare)
     all_stocks: dict[str, dict] = {}
     for day in trading_days[:5]:
         print(f"  查询 {day} 涨停板...")
@@ -507,21 +561,23 @@ def screen_a_stocks(max_stocks: int = 60) -> list[dict]:
         print("  未获取到涨停股数据")
         return []
 
-    print(f"  去重后共 {len(all_stocks)} 只涨停股，开始K线筛选...")
+    print(f"  去重后共 {len(all_stocks)} 只涨停股")
 
     # Sort by most recent limit-up date, take top N
     sorted_stocks = sorted(all_stocks.values(), key=lambda x: x["limit_up_date"], reverse=True)
     candidates = sorted_stocks[:max_stocks]
+    codes = [s["code"] for s in candidates]
 
+    # Phase 2: Batch download K-line data via yfinance
+    print(f"  批量获取 {len(codes)} 只个股K线 (yfinance)...")
+    kline_data = get_kline_batch_yf(codes, lookback=30)
+    print(f"  K线数据获取成功: {len(kline_data)} 只")
+
+    # Phase 3: Screen each stock
     results = []
-    for i, stock in enumerate(candidates):
+    for stock in candidates:
         code = stock["code"]
-        if i > 0 and i % 10 == 0:
-            time.sleep(0.8)
-        elif i > 0:
-            time.sleep(0.3)
-
-        klines = get_kline_ak(code, lookback=25)
+        klines = kline_data.get(code)
         if not klines:
             continue
 
@@ -538,9 +594,11 @@ def screen_a_stocks(max_stocks: int = 60) -> list[dict]:
         # Check: above MA5 for recent days (不跌破5日线)
         above_ma5 = True
         for j in range(1, min(4, len(closes))):
-            c = closes[-j]
-            ma = sum(closes[max(0, len(closes) - j - 4):len(closes) - j + 1]) / min(j + 1, 5)
-            if c < ma * 0.98:
+            start_idx = max(0, len(closes) - j - 4)
+            end_idx = len(closes) - j + 1
+            window = closes[start_idx:end_idx]
+            ma = sum(window) / len(window) if window else closes[-j]
+            if closes[-j] < ma * 0.98:
                 above_ma5 = False
                 break
         if not above_ma5:
@@ -550,11 +608,12 @@ def screen_a_stocks(max_stocks: int = 60) -> list[dict]:
         if len(volumes) >= 20:
             vol_5 = sum(volumes[-5:]) / 5
             vol_20 = sum(volumes[-20:]) / 20
-            vol_ratio = round(vol_5 / vol_20, 2)
+            vol_ratio = round(vol_5 / vol_20, 2) if vol_20 > 0 else 0
         elif len(volumes) >= 10:
             vol_5 = sum(volumes[-5:]) / 5
-            vol_20 = sum(volumes[:-5]) / (len(volumes) - 5)
-            vol_ratio = round(vol_5 / vol_20, 2) if vol_20 > 0 else 0
+            vol_older = sum(volumes[:-5])
+            vol_older_n = len(volumes) - 5
+            vol_ratio = round(vol_5 / (vol_older / vol_older_n), 2) if vol_older_n > 0 and vol_older > 0 else 0
         else:
             continue
 
@@ -562,8 +621,8 @@ def screen_a_stocks(max_stocks: int = 60) -> list[dict]:
             continue
 
         # Volume trend
-        if len(volumes) >= 5:
-            first_half = sum(volumes[-5:-2]) / 3
+        if len(volumes) >= 6:
+            first_half = sum(volumes[-6:-3]) / 3
             second_half = sum(volumes[-3:]) / 3
             vol_trend = "递增" if second_half > first_half else "维持"
         else:
