@@ -400,203 +400,184 @@ def _fetch_url(url: str, timeout: int = 20, retries: int = 3) -> dict | None:
     return None
 
 
-def get_limit_up_stocks(date_str: str) -> list[dict]:
-    """Get limit-up stocks for a given date from Eastmoney API."""
-    url = (
-        "https://push2.eastmoney.com/api/qt/clist/get"
-        f"?fid=f3&po=1&pz=500&pn=1&np=1&fltt=2&invt=2"
-        "&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23"
-        "&fields=f2,f3,f10,f12,f14"
-    )
-    data = _fetch_url(url, timeout=30, retries=3)
-    if not data or "data" not in data:
+# ============================================================================
+# A-share stock screening (via akshare)
+# ============================================================================
+
+def _get_recent_trading_days(n: int = 6) -> list[str]:
+    """Get last N trading days as YYYYMMDD strings using akshare calendar."""
+    try:
+        import akshare as ak
+        df = ak.tool_trade_date_hist_sina()
+        if df is None or df.empty:
+            raise ValueError("empty trade calendar")
+        trade_dates = sorted(df["trade_date"].tolist(), reverse=True)
+        today = datetime.datetime.now(TZ_CHINA).strftime("%Y-%m-%d")
+        # Get past trading days (before today)
+        past = [d for d in trade_dates if d < today]
+        return [d.replace("-", "") for d in past[:n]]
+    except Exception:
+        pass
+
+    # Fallback: use weekdays
+    today = datetime.datetime.now(TZ_CHINA)
+    days = []
+    for i in range(1, n + 5):
+        d = today - datetime.timedelta(days=i)
+        if d.weekday() < 5:
+            days.append(d.strftime("%Y%m%d"))
+        if len(days) >= n:
+            break
+    return days
+
+
+def get_limit_up_stocks_ak(date_str: str) -> list[dict]:
+    """Get limit-up stocks for a given date using akshare."""
+    try:
+        import akshare as ak
+        df = ak.stock_zt_pool_em(date=date_str)
+        if df is None or df.empty:
+            return []
+
+        stocks = []
+        for _, row in df.iterrows():
+            code = str(row.get("代码", "")).strip()
+            name = str(row.get("名称", "")).strip()
+            pct = row.get("涨跌幅", 0) or 0
+            if float(pct) >= 9.5:
+                stocks.append({
+                    "code": code,
+                    "name": name,
+                    "change_pct": round(float(pct), 2),
+                    "limit_up_date": date_str,
+                })
+        return stocks
+    except Exception as e:
+        print(f"  akshare limit-up query failed for {date_str}: {e}")
         return []
 
-    diff_items = data["data"].get("diff", []) if data.get("data") else []
-    if not diff_items:
-        return []
 
-    stocks = []
-    for item in diff_items:
-        code = item.get("f12", "")
-        name = item.get("f14", "")
-        pct = item.get("f3", 0) or 0
-        if float(pct) >= 9.5:
-            stocks.append({
-                "code": code,
-                "name": name,
-                "change_pct": round(float(pct), 2),
-                "limit_up_date": date_str,
+def get_kline_ak(code: str, lookback: int = 25) -> list[dict] | None:
+    """Fetch daily K-line data for an A-share stock using akshare."""
+    try:
+        import akshare as ak
+        end_date = datetime.datetime.now(TZ_CHINA).strftime("%Y%m%d")
+        start_date = (datetime.datetime.now(TZ_CHINA) - datetime.timedelta(days=lookback + 15)).strftime("%Y%m%d")
+        df = ak.stock_zh_a_hist(symbol=code, period="daily",
+                                start_date=start_date, end_date=end_date,
+                                adjust="qfq")
+        if df is None or df.empty or len(df) < 10:
+            return None
+
+        result = []
+        for _, row in df.iterrows():
+            result.append({
+                "date": str(row.get("日期", ""))[:10].replace("-", ""),
+                "open": float(row.get("开盘", 0) or 0),
+                "close": float(row.get("收盘", 0) or 0),
+                "high": float(row.get("最高", 0) or 0),
+                "low": float(row.get("最低", 0) or 0),
+                "volume": float(row.get("成交量", 0) or 0),
+                "amount": float(row.get("成交额", 0) or 0),
             })
-    return stocks
-
-
-def get_all_a_quotes() -> dict[str, dict]:
-    """Get all A-share stocks with volume ratio using the proven clist/get endpoint."""
-    all_results: dict[str, dict] = {}
-
-    for page in range(1, 6):
-        url = (
-            "https://push2.eastmoney.com/api/qt/clist/get"
-            f"?fid=f3&po=1&pz=1000&pn={page}&np=1&fltt=2&invt=2"
-            "&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23"
-            "&fields=f2,f3,f8,f10,f12,f14"
-        )
-        data = _fetch_url(url, timeout=30, retries=2)
-        if not data or "data" not in data:
-            break
-
-        items = data["data"].get("diff", []) if data.get("data") else []
-        if not items:
-            break
-
-        for item in items:
-            code = item.get("f12", "")
-            if not code:
-                continue
-            close_price = item.get("f2", 0) or 0
-            vol_ratio = item.get("f10", 0) or 0
-            turnover = item.get("f8", 0) or 0
-
-            all_results[code] = {
-                "code": code,
-                "name": item.get("f14", ""),
-                "close": float(close_price) if close_price not in (0, "-") else 0,
-                "change_pct": float(item.get("f3", 0) or 0),
-                "vol_ratio": float(vol_ratio) if vol_ratio not in (0, "-") else 0,
-                "turnover": float(turnover) if turnover not in (0, "-") else 0,
-            }
-
-        time.sleep(0.2)
-
-    return all_results
-
-
-def get_stock_kline_brief(code: str) -> dict | None:
-    """Fetch K-line data (last 15 days) to check: recent limit-up, MA5, volume trend."""
-    if code.startswith("6"):
-        secid = f"1.{code}"
-    else:
-        secid = f"0.{code}"
-
-    end_date = datetime.datetime.now(TZ_CHINA).strftime("%Y%m%d")
-    url = (
-        "https://push2his.eastmoney.com/api/qt/stock/kline/get"
-        f"?secid={secid}&fields1=f1,f2,f3,f4,f5,f6"
-        "&fields2=f51,f52,f53,f54,f55,f56,f57"
-        f"&klt=101&fqt=1&end={end_date}&lmt=15"
-    )
-    data = _fetch_url(url, timeout=20, retries=2)
-    if not data or "data" not in data:
+        return result
+    except Exception as e:
+        print(f"  akshare kline query failed for {code}: {e}")
         return None
 
-    klines = data["data"].get("klines", []) if data.get("data") else []
-    if not klines or len(klines) < 7:
-        return None
 
-    closes = []
-    volumes = []
-    kline_dates = []
-    for line in klines:
-        parts = line.split(",")
-        if len(parts) < 7:
-            continue
-        kline_dates.append(parts[0])
-        closes.append(float(parts[2]))
-        volumes.append(float(parts[5]))
+def screen_a_stocks(max_stocks: int = 60) -> list[dict]:
+    """Screen A-share stocks using akshare: limit-up in last 5 days + volume up + above MA5."""
+    trading_days = _get_recent_trading_days(6)
+    print(f"  交易日: {', '.join(trading_days[:5])}")
 
-    if len(closes) < 7:
-        return None
+    # Phase 1: Get limit-up stocks for each trading day
+    all_stocks: dict[str, dict] = {}
+    for day in trading_days[:5]:
+        print(f"  查询 {day} 涨停板...")
+        stocks = get_limit_up_stocks_ak(day)
+        if stocks:
+            for s in stocks:
+                code = s["code"]
+                if code not in all_stocks:
+                    all_stocks[code] = s
+        time.sleep(0.5)
 
-    # Check for limit-up (>= 9.5% daily gain) in the last 5 trading days
-    limit_up_date = ""
-    limit_up_pct = 0.0
-    check_days = min(10, len(closes) - 2)
-    for i in range(2, check_days + 1):
-        prev_close = closes[-i]
-        curr_close = closes[-i + 1]
-        if prev_close > 0:
-            daily_chg = (curr_close - prev_close) / prev_close * 100
-            if daily_chg >= 9.5:
-                limit_up_date = kline_dates[-i + 1]
-                limit_up_pct = round(daily_chg, 2)
-                break  # Use the most recent limit-up
-
-    # Calculate MA5
-    ma5 = sum(closes[-5:]) / 5
-    latest_close = closes[-1]
-    ma5_dist = (latest_close - ma5) / ma5 * 100
-
-    # Volume trend
-    vols_recent = volumes[-3:] if len(volumes) >= 3 else volumes
-    vols_older = volumes[:-3] if len(volumes) > 3 else volumes[:1]
-    vol_up = sum(vols_recent) / len(vols_recent) > sum(vols_older) / len(vols_older) if vols_older else True
-
-    return {
-        "close": latest_close,
-        "ma5": round(ma5, 2),
-        "ma5_distance": round(ma5_dist, 2),
-        "vol_trend": "递增" if vol_up else "维持",
-        "had_limit_up": limit_up_date != "",
-        "limit_up_date": limit_up_date,
-        "limit_up_pct": limit_up_pct,
-    }
-
-
-def screen_a_stocks(max_stocks: int = 50) -> list[dict]:
-    """Screen A-share stocks: limit-up in last 5 days + volume up + above MA5.
-    Uses K-line data directly to detect limit-ups, avoiding the problematic
-    limit-up pool endpoint.
-    """
-    # Phase 1: Get all A-shares with volume ratio
-    print("  获取全A股量比数据...")
-    all_quotes = get_all_a_quotes()
-    print(f"  获取到 {len(all_quotes)} 只个股数据")
-
-    if not all_quotes:
-        print("  未获取到全A股数据")
+    if not all_stocks:
+        print("  未获取到涨停股数据")
         return []
 
-    # Phase 2: Pre-filter by volume ratio
-    candidates = []
-    for code, q in all_quotes.items():
-        if q["vol_ratio"] >= 1.1 and q["close"] > 0 and q["change_pct"] > -5:
-            candidates.append((code, q))
+    print(f"  去重后共 {len(all_stocks)} 只涨停股，开始K线筛选...")
 
-    candidates.sort(key=lambda x: x[1]["vol_ratio"], reverse=True)
-    candidates = candidates[:max_stocks]
+    # Sort by most recent limit-up date, take top N
+    sorted_stocks = sorted(all_stocks.values(), key=lambda x: x["limit_up_date"], reverse=True)
+    candidates = sorted_stocks[:max_stocks]
 
-    print(f"  量比>=1.1: {len(candidates)} 只，开始K线验证...")
-
-    # Phase 3: K-line verification (limit-up + MA5 + volume)
     results = []
-    for i, (code, quote) in enumerate(candidates):
+    for i, stock in enumerate(candidates):
+        code = stock["code"]
         if i > 0 and i % 10 == 0:
-            time.sleep(0.5)
+            time.sleep(0.8)
         elif i > 0:
-            time.sleep(0.2)
+            time.sleep(0.3)
 
-        kline_info = get_stock_kline_brief(code)
-        if not kline_info:
+        klines = get_kline_ak(code, lookback=25)
+        if not klines:
             continue
 
-        # Must have had limit-up in last 5 trading days
-        if not kline_info["had_limit_up"]:
+        closes = [k["close"] for k in klines]
+        volumes = [k["volume"] for k in klines]
+
+        if len(closes) < 7:
             continue
 
-        # Must be above MA5 (不跌破5日线)
-        if kline_info["ma5_distance"] < -0.5:
+        # MA5
+        ma5 = sum(closes[-5:]) / 5
+        ma5_dist = (closes[-1] - ma5) / ma5 * 100
+
+        # Check: above MA5 for recent days (不跌破5日线)
+        above_ma5 = True
+        for j in range(1, min(4, len(closes))):
+            c = closes[-j]
+            ma = sum(closes[max(0, len(closes) - j - 4):len(closes) - j + 1]) / min(j + 1, 5)
+            if c < ma * 0.98:
+                above_ma5 = False
+                break
+        if not above_ma5:
             continue
+
+        # Volume ratio: 5-day avg / 20-day avg
+        if len(volumes) >= 20:
+            vol_5 = sum(volumes[-5:]) / 5
+            vol_20 = sum(volumes[-20:]) / 20
+            vol_ratio = round(vol_5 / vol_20, 2)
+        elif len(volumes) >= 10:
+            vol_5 = sum(volumes[-5:]) / 5
+            vol_20 = sum(volumes[:-5]) / (len(volumes) - 5)
+            vol_ratio = round(vol_5 / vol_20, 2) if vol_20 > 0 else 0
+        else:
+            continue
+
+        if vol_ratio < 1.1:
+            continue
+
+        # Volume trend
+        if len(volumes) >= 5:
+            first_half = sum(volumes[-5:-2]) / 3
+            second_half = sum(volumes[-3:]) / 3
+            vol_trend = "递增" if second_half > first_half else "维持"
+        else:
+            vol_trend = "—"
 
         results.append({
             "code": code,
-            "name": quote["name"],
-            "limit_up_date": kline_info["limit_up_date"],
-            "limit_up_pct": kline_info["limit_up_pct"],
-            "vol_ratio": quote["vol_ratio"],
-            "ma5_distance": kline_info["ma5_distance"],
-            "vol_trend": kline_info.get("vol_trend", "—"),
-            "close": quote["close"],
+            "name": stock["name"],
+            "limit_up_date": stock["limit_up_date"],
+            "limit_up_pct": stock["change_pct"],
+            "vol_ratio": vol_ratio,
+            "ma5_distance": round(ma5_dist, 2),
+            "vol_trend": vol_trend,
+            "close": round(closes[-1], 2),
         })
 
     results.sort(key=lambda x: (x["vol_ratio"], x["ma5_distance"]), reverse=True)

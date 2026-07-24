@@ -11,8 +11,8 @@ Write-Host ""
 
 # 1. Install Python dependencies
 Write-Host "[1/3] 安装 Python 依赖..." -ForegroundColor Yellow
-pip install yfinance
-Write-Host "  yfinance 安装完成" -ForegroundColor Green
+pip install yfinance akshare
+Write-Host "  yfinance / akshare 安装完成" -ForegroundColor Green
 Write-Host ""
 
 # 2. Test the script with sample output
