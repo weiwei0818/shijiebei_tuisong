@@ -1,4 +1,4 @@
-name: Daily World Cup Broadcast
+name: Daily Stock Broadcast
 
 on:
   schedule:
@@ -21,13 +21,12 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install edge-tts
+        run: pip install yfinance
 
-      - name: Run broadcast script
+      - name: Run stock broadcast script
         env:
           PUSH_TOKEN: ${{ secrets.PUSH_TOKEN }}
-          AUDIO_BASE_URL: https://weiwei0818.github.io/shijiebei_tuisong
-        run: python worldcup_broadcast.py --push
+        run: python stock_broadcast.py --push
 
       - name: Commit quotes tracking
         run: |
@@ -36,10 +35,3 @@ jobs:
           git add quotes_used.json
           git diff --cached --quiet || git commit -m "update quotes tracking"
           git push
-
-      - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./web
-          force_orphan: true
