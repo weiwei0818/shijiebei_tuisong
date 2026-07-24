@@ -473,7 +473,7 @@ def get_all_a_quotes() -> dict[str, dict]:
 
 
 def get_stock_kline_brief(code: str) -> dict | None:
-    """Fetch minimal K-line data (last 10 days) for a single stock to check MA5."""
+    """Fetch K-line data (last 15 days) to check: recent limit-up, MA5, volume trend."""
     if code.startswith("6"):
         secid = f"1.{code}"
     else:
@@ -484,7 +484,7 @@ def get_stock_kline_brief(code: str) -> dict | None:
         "https://push2his.eastmoney.com/api/qt/stock/kline/get"
         f"?secid={secid}&fields1=f1,f2,f3,f4,f5,f6"
         "&fields2=f51,f52,f53,f54,f55,f56,f57"
-        f"&klt=101&fqt=1&end={end_date}&lmt=10"
+        f"&klt=101&fqt=1&end={end_date}&lmt=15"
     )
     data = _fetch_url(url, timeout=20, retries=2)
     if not data or "data" not in data:
@@ -496,21 +496,38 @@ def get_stock_kline_brief(code: str) -> dict | None:
 
     closes = []
     volumes = []
-    for line in klines[-7:]:
+    kline_dates = []
+    for line in klines:
         parts = line.split(",")
         if len(parts) < 7:
             continue
+        kline_dates.append(parts[0])
         closes.append(float(parts[2]))
         volumes.append(float(parts[5]))
 
-    if len(closes) < 5:
+    if len(closes) < 7:
         return None
 
+    # Check for limit-up (>= 9.5% daily gain) in the last 5 trading days
+    limit_up_date = ""
+    limit_up_pct = 0.0
+    check_days = min(10, len(closes) - 2)
+    for i in range(2, check_days + 1):
+        prev_close = closes[-i]
+        curr_close = closes[-i + 1]
+        if prev_close > 0:
+            daily_chg = (curr_close - prev_close) / prev_close * 100
+            if daily_chg >= 9.5:
+                limit_up_date = kline_dates[-i + 1]
+                limit_up_pct = round(daily_chg, 2)
+                break  # Use the most recent limit-up
+
+    # Calculate MA5
     ma5 = sum(closes[-5:]) / 5
     latest_close = closes[-1]
     ma5_dist = (latest_close - ma5) / ma5 * 100
 
-    # Volume trend: simple check if recent volume is elevated
+    # Volume trend
     vols_recent = volumes[-3:] if len(volumes) >= 3 else volumes
     vols_older = volumes[:-3] if len(volumes) > 3 else volumes[:1]
     vol_up = sum(vols_recent) / len(vols_recent) > sum(vols_older) / len(vols_older) if vols_older else True
@@ -520,69 +537,51 @@ def get_stock_kline_brief(code: str) -> dict | None:
         "ma5": round(ma5, 2),
         "ma5_distance": round(ma5_dist, 2),
         "vol_trend": "递增" if vol_up else "维持",
+        "had_limit_up": limit_up_date != "",
+        "limit_up_date": limit_up_date,
+        "limit_up_pct": limit_up_pct,
     }
 
 
 def screen_a_stocks(max_stocks: int = 50) -> list[dict]:
     """Screen A-share stocks: limit-up in last 5 days + volume up + above MA5.
-    Uses a two-phase approach:
-    1. Batch query all candidate stocks' indicators (fast, one request)
-    2. Only fetch K-line for stocks that pass the batch filter
+    Uses K-line data directly to detect limit-ups, avoiding the problematic
+    limit-up pool endpoint.
     """
-    trading_days = _get_a_trading_days(8)
-
-    # Phase 1: Collect limit-up stocks from last 5 trading days
-    all_stocks: dict[str, dict] = {}
-    days_processed = 0
-    for day in trading_days:
-        if days_processed >= 5:
-            break
-        print(f"  查询 {day} 涨停板数据...")
-        stocks = get_limit_up_stocks(day)
-        if not stocks:
-            continue
-        days_processed += 1
-        for s in stocks:
-            code = s["code"]
-            if code not in all_stocks:
-                all_stocks[code] = s
-        time.sleep(0.3)
-
-    if not all_stocks:
-        print("  未获取到涨停股数据")
-        return []
-
-    print(f"  去重后共 {len(all_stocks)} 只涨停股")
-
-    # Phase 2: Get all A-shares with volume ratio via clist/get
+    # Phase 1: Get all A-shares with volume ratio
     print("  获取全A股量比数据...")
     all_quotes = get_all_a_quotes()
-    print(f"  获取到 {len(all_quotes)} 只个股的量比数据")
+    print(f"  获取到 {len(all_quotes)} 只个股数据")
 
-    # Phase 3: Pre-filter by volume ratio from all-quotes data
+    if not all_quotes:
+        print("  未获取到全A股数据")
+        return []
+
+    # Phase 2: Pre-filter by volume ratio
     candidates = []
-    for code, stock in all_stocks.items():
-        quote = all_quotes.get(code)
-        if not quote:
-            continue
-        vol_ratio = quote.get("vol_ratio", 0)
-        if vol_ratio >= 1.1:
-            candidates.append((code, stock, quote))
+    for code, q in all_quotes.items():
+        if q["vol_ratio"] >= 1.1 and q["close"] > 0 and q["change_pct"] > -5:
+            candidates.append((code, q))
 
-    # Sort by volume ratio descending, take top N
-    candidates.sort(key=lambda x: x[2].get("vol_ratio", 0), reverse=True)
+    candidates.sort(key=lambda x: x[1]["vol_ratio"], reverse=True)
     candidates = candidates[:max_stocks]
 
-    print(f"  量比>=1.1的共 {len(candidates)} 只，逐只验证MA5...")
+    print(f"  量比>=1.1: {len(candidates)} 只，开始K线验证...")
 
-    # Phase 4: Verify MA5 condition with individual K-line (only for filtered candidates)
+    # Phase 3: K-line verification (limit-up + MA5 + volume)
     results = []
-    for i, (code, stock, quote) in enumerate(candidates):
+    for i, (code, quote) in enumerate(candidates):
         if i > 0 and i % 10 == 0:
             time.sleep(0.5)
+        elif i > 0:
+            time.sleep(0.2)
 
         kline_info = get_stock_kline_brief(code)
         if not kline_info:
+            continue
+
+        # Must have had limit-up in last 5 trading days
+        if not kline_info["had_limit_up"]:
             continue
 
         # Must be above MA5 (不跌破5日线)
@@ -591,15 +590,14 @@ def screen_a_stocks(max_stocks: int = 50) -> list[dict]:
 
         results.append({
             "code": code,
-            "name": stock["name"],
-            "limit_up_date": stock["limit_up_date"],
-            "limit_up_pct": stock["change_pct"],
-            "vol_ratio": quote.get("vol_ratio", 0),
+            "name": quote["name"],
+            "limit_up_date": kline_info["limit_up_date"],
+            "limit_up_pct": kline_info["limit_up_pct"],
+            "vol_ratio": quote["vol_ratio"],
             "ma5_distance": kline_info["ma5_distance"],
             "vol_trend": kline_info.get("vol_trend", "—"),
-            "close": quote.get("close", 0),
+            "close": quote["close"],
         })
-        time.sleep(0.2)
 
     results.sort(key=lambda x: (x["vol_ratio"], x["ma5_distance"]), reverse=True)
     return results
