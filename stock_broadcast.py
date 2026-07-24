@@ -697,7 +697,7 @@ def build_push_text(
     lines.append(f"\n━━━ A股涨停筛选 (近5日涨停+放量+站上5日线) ━━━")
     if a_results:
         lines.append(f"  共筛选出 {len(a_results)} 只个股：")
-        for i, s in enumerate(a_results[:20], 1):
+        for i, s in enumerate(a_results[:10], 1):
             lu_date = s["limit_up_date"][4:6] + "/" + s["limit_up_date"][6:8]
             lines.append(
                 f"  {i:2d}. {s['code']} {s['name']}  "
@@ -761,7 +761,7 @@ def main():
 
     # 1. US stock top gainers
     print("\n── 美股数据 ──")
-    us_result = get_us_top_gainers(top_n=20)
+    us_result = get_us_top_gainers(top_n=10)
     us_gainers: list[dict] = []
     us_date = ""
     sector_heat: dict[str, int] = {}
