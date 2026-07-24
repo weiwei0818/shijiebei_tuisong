@@ -431,60 +431,43 @@ def get_limit_up_stocks(date_str: str) -> list[dict]:
     return stocks
 
 
-def get_batch_quotes(codes: list[str]) -> dict[str, dict]:
-    """Batch query current quote data for a list of stock codes.
-    Uses Eastmoney API to get all indicators in one request.
-    """
-    if not codes:
-        return {}
-
-    # Build secids list: 0.000001,1.600519,...
-    secids = []
-    for code in codes:
-        if code.startswith("6"):
-            secids.append(f"1.{code}")
-        else:
-            secids.append(f"0.{code}")
-
+def get_all_a_quotes() -> dict[str, dict]:
+    """Get all A-share stocks with volume ratio using the proven clist/get endpoint."""
     all_results: dict[str, dict] = {}
 
-    # Batch in groups of 100 to avoid URL too long
-    for batch_start in range(0, len(secids), 100):
-        batch = secids[batch_start:batch_start + 100]
-        secids_str = ",".join(batch)
-
+    for page in range(1, 6):
         url = (
-            "https://push2.eastmoney.com/api/qt/ulist.np/get"
-            f"?fltt=2&invt=2&secids={secids_str}"
-            "&fields=f2,f3,f8,f10,f12,f14,f15,f16,f17,f43,f47,f48,f50,f57,f58,f60"
+            "https://push2.eastmoney.com/api/qt/clist/get"
+            f"?fid=f3&po=1&pz=1000&pn={page}&np=1&fltt=2&invt=2"
+            "&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23"
+            "&fields=f2,f3,f8,f10,f12,f14"
         )
         data = _fetch_url(url, timeout=30, retries=2)
         if not data or "data" not in data:
-            continue
+            break
 
         items = data["data"].get("diff", []) if data.get("data") else []
         if not items:
-            continue
+            break
 
         for item in items:
             code = item.get("f12", "")
             if not code:
                 continue
             close_price = item.get("f2", 0) or 0
-            vol_ratio = item.get("f10", 0) or 0  # 量比
+            vol_ratio = item.get("f10", 0) or 0
             turnover = item.get("f8", 0) or 0
 
             all_results[code] = {
                 "code": code,
                 "name": item.get("f14", ""),
-                "close": float(close_price) if close_price != "-" else 0,
+                "close": float(close_price) if close_price not in (0, "-") else 0,
                 "change_pct": float(item.get("f3", 0) or 0),
-                "vol_ratio": float(vol_ratio) if vol_ratio != "-" else 0,
-                "turnover": float(turnover) if turnover != "-" else 0,
+                "vol_ratio": float(vol_ratio) if vol_ratio not in (0, "-") else 0,
+                "turnover": float(turnover) if turnover not in (0, "-") else 0,
             }
 
-        if batch_start + 100 < len(secids):
-            time.sleep(0.3)
+        time.sleep(0.2)
 
     return all_results
 
@@ -571,16 +554,15 @@ def screen_a_stocks(max_stocks: int = 50) -> list[dict]:
 
     print(f"  去重后共 {len(all_stocks)} 只涨停股")
 
-    # Phase 2: Batch query current indicators for all candidates
-    codes = list(all_stocks.keys())
-    print(f"  批量查询 {len(codes)} 只个股技术指标...")
-    batch_data = get_batch_quotes(codes)
-    print(f"  批量查询返回 {len(batch_data)} 只个股数据")
+    # Phase 2: Get all A-shares with volume ratio via clist/get
+    print("  获取全A股量比数据...")
+    all_quotes = get_all_a_quotes()
+    print(f"  获取到 {len(all_quotes)} 只个股的量比数据")
 
-    # Phase 3: Pre-filter by volume ratio from batch data
+    # Phase 3: Pre-filter by volume ratio from all-quotes data
     candidates = []
     for code, stock in all_stocks.items():
-        quote = batch_data.get(code)
+        quote = all_quotes.get(code)
         if not quote:
             continue
         vol_ratio = quote.get("vol_ratio", 0)
