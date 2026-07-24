@@ -538,6 +538,32 @@ def get_kline_batch_yf(codes: list[str], lookback: int = 30) -> dict[str, list[d
     return all_data
 
 
+def get_a_concept_leaders(top_n: int = 10) -> list[dict]:
+    """Get top performing A-share concept boards from Eastmoney."""
+    url = (
+        "https://push2.eastmoney.com/api/qt/clist/get"
+        f"?fid=f3&po=1&pz={top_n}&pn=1&np=1&fltt=2&invt=2"
+        "&fs=m:90+t:3"
+        "&fields=f2,f3,f12,f14"
+    )
+    data = _fetch_url(url, timeout=20, retries=2)
+    if not data or "data" not in data:
+        return []
+
+    items = data["data"].get("diff", []) if data.get("data") else []
+    if not items:
+        return []
+
+    concepts = []
+    for item in items:
+        concepts.append({
+            "code": item.get("f12", ""),
+            "name": item.get("f14", ""),
+            "change_pct": round(float(item.get("f3", 0) or 0), 2),
+        })
+    return concepts
+
+
 def screen_a_stocks(max_stocks: int = 80) -> list[dict]:
     """Screen A-share stocks: limit-up in last 5 days + volume up + above MA5.
     Uses akshare for limit-up detection, yfinance for batch K-line data.
@@ -653,6 +679,7 @@ def build_push_text(
     us_date: str,
     sector_heat: dict[str, int],
     sector_etfs: list[dict],
+    a_concepts: list[dict],
     a_results: list[dict],
     quote: dict[str, str] | None = None,
 ) -> str:
@@ -680,7 +707,6 @@ def build_push_text(
         top_sectors = list(sector_heat.keys())[:5]
         lines.append(f"  🔥 涨幅榜集中板块: {'、'.join(top_sectors)}")
 
-        # Theme analysis
         theme_keywords = {
             "AI芯片": ["AI芯片", "半导体", "半导体设备", "芯片IP", "数据中心芯片"],
             "软件云": ["软件云服务", "软件", "SaaS", "企业软件", "云监控", "数据库", "大数据AI"],
@@ -712,6 +738,15 @@ def build_push_text(
             sign = "+" if se["change_pct"] >= 0 else ""
             etf_parts.append(f"{se['sector']} {sign}{se['change_pct']:.2f}%")
         lines.append(f"  📈 ETF: {' | '.join(etf_parts)}")
+
+    # ── A-share concept boards ──
+    if a_concepts:
+        lines.append(f"\n【A股概念板块涨幅 TOP10】")
+        for i, c in enumerate(a_concepts[:10], 1):
+            icon = "🔴" if i <= 3 else ("🟠" if i <= 5 else "⚪")
+            lines.append(f"  {icon}{i:2d}. {c['name']} {c['change_pct']:+.2f}%")
+    else:
+        lines.append(f"\n【A股概念板块】暂无数据")
 
     # ── A-share screening results ──
     lines.append(f"\n━━━ A股涨停筛选 (近5日涨停+放量+站上5日线) ━━━")
@@ -797,16 +832,23 @@ def main():
     else:
         print("  美股数据获取失败，跳过")
 
-    # 2. A-share screening
+    # 2. A-share concept boards
+    print("\n── A股概念板块 ──")
+    a_concepts = get_a_concept_leaders(top_n=10)
+    print(f"  获取到 {len(a_concepts)} 个领涨概念板块")
+    for c in a_concepts[:5]:
+        print(f"    {c['name']} {c['change_pct']:+.2f}%")
+
+    # 3. A-share screening
     print("\n── A股涨停筛选 ──")
     a_results = screen_a_stocks(max_stocks=60)
     print(f"  筛选出 {len(a_results)} 只符合条件的个股")
     for s in a_results[:5]:
         print(f"    {s['code']} {s['name']} 涨停:{s['limit_up_date']} 量比:{s['vol_ratio']}")
 
-    # 3. Build and send push
+    # 4. Build and send push
     push_content = build_push_text(now, us_gainers if us_gainers else None, us_date,
-                                   sector_heat, sector_etfs, a_results, quote)
+                                   sector_heat, sector_etfs, a_concepts, a_results, quote)
     print(f"\n── 推送内容预览 ──")
     print(push_content[:500])
 
@@ -846,6 +888,18 @@ def generate_sample():
         {"sector": "金融", "etf": "XLF", "change_pct": -0.3},
         {"sector": "能源", "etf": "XLE", "change_pct": -0.5},
     ]
+    sample_concepts = [
+        {"name": "AI人工智能", "change_pct": 4.52},
+        {"name": "芯片半导体", "change_pct": 3.81},
+        {"name": "机器人概念", "change_pct": 3.15},
+        {"name": "新能源汽车", "change_pct": 2.88},
+        {"name": "光伏概念", "change_pct": 2.60},
+        {"name": "数字经济", "change_pct": 2.35},
+        {"name": "军工航天", "change_pct": 2.10},
+        {"name": "创新药", "change_pct": 1.95},
+        {"name": "储能", "change_pct": 1.80},
+        {"name": "元宇宙", "change_pct": 1.65},
+    ]
     sample_a = [
         {"code": "600519", "name": "贵州茅台", "limit_up_date": "20260723", "vol_ratio": 2.15,
          "ma5_distance": 2.3, "vol_trend": "递增"},
@@ -860,7 +914,7 @@ def generate_sample():
     ]
     quote = pick_quote()
     text = build_push_text(now, sample_gainers, "07月23日", sample_sector_heat,
-                           sample_etfs, sample_a, quote)
+                           sample_etfs, sample_concepts, sample_a, quote)
     print("=" * 60)
     print(text)
     print("=" * 60)
