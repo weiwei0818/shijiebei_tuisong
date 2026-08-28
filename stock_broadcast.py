@@ -1,7 +1,7 @@
 """
 Stock market daily broadcast.
 Pushes US stock top gainers, hot themes, and A-share momentum screening to WeChat.
-Runs at 6:00 AM Beijing time via GitHub Actions.
+Runs at 6:15 AM Beijing time via GitHub Actions.
 """
 import os
 import sys
