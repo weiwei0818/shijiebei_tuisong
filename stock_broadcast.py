@@ -23,6 +23,7 @@ if sys.platform == "win32":
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 TZ_CHINA = zoneinfo.ZoneInfo("Asia/Shanghai")
 QUOTES_FILE = os.path.join(PROJECT_DIR, "quotes_used.json")
+LAST_PUSH_FILE = os.path.join(PROJECT_DIR, "last_push_time.txt")
 
 # ============================================================================
 # Daily quotes (80 quotes kept from original)
@@ -757,19 +758,39 @@ def build_push_text(
 # Push notification
 # ============================================================================
 
-def send_pushplus(token: str, title: str, content: str) -> bool:
+def _last_push_date() -> str:
+    """Return Beijing date (YYYYMMDD) of last successful push, or empty string."""
+    try:
+        with open(LAST_PUSH_FILE, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def _mark_pushed(date_str: str) -> None:
+    with open(LAST_PUSH_FILE, "w", encoding="utf-8") as f:
+        f.write(date_str)
+
+
+def send_pushplus(token: str, title: str, content: str, retries: int = 3) -> bool:
+    """推送失败时自动重试，最多 retries 次，间隔递增。"""
     url = "http://www.pushplus.plus/send"
     data = json.dumps({
         "token": token, "title": title, "content": content, "template": "txt",
     }).encode("utf-8")
-    try:
-        req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            result = json.loads(resp.read().decode())
-            return result.get("code") == 200
-    except Exception as e:
-        print(f"  PushPlus 推送失败: {e}")
-        return False
+    for attempt in range(retries):
+        try:
+            req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                result = json.loads(resp.read().decode())
+                if result.get("code") == 200:
+                    return True
+                print(f"  PushPlus 返回异常: {result}")
+        except Exception as e:
+            print(f"  PushPlus 推送失败 (第{attempt + 1}/{retries}次): {e}")
+        if attempt < retries - 1:
+            time.sleep(10 * (attempt + 1))
+    return False
 
 
 def send_push(title: str, content: str) -> bool:
@@ -826,9 +847,15 @@ def main():
     print(push_content[:500])
 
     if do_push:
-        push_title = f"📈 股市播报 {now.strftime('%m月%d日')}"
-        ok = send_push(push_title, push_content)
-        print(f"  推送结果: {'成功' if ok else '失败'}")
+        push_date = now.strftime("%Y%m%d")
+        if _last_push_date() == push_date:
+            print(f"  今天 ({push_date}) 已推送过，跳过发送（避免重复推送）")
+        else:
+            push_title = f"📈 股市播报 {now.strftime('%m月%d日')}"
+            ok = send_push(push_title, push_content)
+            print(f"  推送结果: {'成功' if ok else '失败'}")
+            if ok:
+                _mark_pushed(push_date)
     else:
         print("  (未启用推送，使用 --push 或设置 PUSH_TOKEN 环境变量)")
 

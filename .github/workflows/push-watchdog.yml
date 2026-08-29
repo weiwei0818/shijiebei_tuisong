@@ -1,0 +1,50 @@
+name: Push Watchdog
+
+on:
+  schedule:
+    # 北京时间 06:45 / 07:45 / 08:45 = UTC 22:45 / 23:45 / 00:45
+    # 主推送任务在 06:15（UTC 22:15）触发；若都没成功推送，看门狗在半小时后重新触发
+    - cron: "45 22 * * *"
+    - cron: "45 23 * * *"
+    - cron: "45 0 * * *"
+  workflow_dispatch:
+
+jobs:
+  watchdog:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Re-trigger push if not pushed today
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TODAY=$(TZ='Asia/Shanghai' date +%Y%m%d)
+          LAST=""
+          if [ -f last_push_time.txt ]; then
+            LAST=$(tr -d '\r\n' < last_push_time.txt)
+          fi
+          echo "today=$TODAY last_push=$LAST"
+
+          if [ "$LAST" = "$TODAY" ]; then
+            echo "今天已推送，无需重试"
+            exit 0
+          fi
+
+          # 若主任务正在运行或排队中，等它自己完成，避免重复触发
+          RUNNING=$(gh run list --workflow=daily-broadcast.yml --limit 5 \
+            --json status,databaseId \
+            --jq '.[] | select(.status=="queued" or .status=="in_progress") | .databaseId' \
+            2>/dev/null | head -1)
+          if [ -n "$RUNNING" ]; then
+            echo "主任务仍在运行 (run $RUNNING)，不重复触发"
+            exit 0
+          fi
+
+          echo "今天还没推送成功，重新触发主推送任务..."
+          gh workflow run daily-broadcast.yml --ref master
