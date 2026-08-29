@@ -2,7 +2,8 @@ name: Daily Stock Broadcast
 
 on:
   schedule:
-    - cron: "15 22 * * *"
+    # 北京时间 10:30 = UTC 02:30
+    - cron: "30 2 * * *"
   workflow_dispatch:
 
 jobs:
